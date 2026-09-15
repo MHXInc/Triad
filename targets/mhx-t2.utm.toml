@@ -1,0 +1,98 @@
+# Universal Ternary Machine target description: MHX-T2 (first backend).
+# tric --target reads this file; firmware must never hardcode these.
+
+[target]
+name = "mhx-t2"
+isa = "mhx-t2-v2.2"
+clock_hz = 100_000_000
+trits_per_word = 32
+word_bytes = 8
+trf_regs = 64
+gpr_regs = 32
+harts = 2
+reset_pc = ["0x0", "0x1000"]
+trap_vector = "0x100"
+
+[regions]
+bootrom = "0x00000000"
+sram = "0x00000400"
+sp = "0x80000000"
+l2 = "0x90000000"
+mmio = "0xA0000000"
+plic = "0xA0010000"
+
+[mmio]
+UART_TXDATA = "0x00"
+UART_RXDATA = "0x08"
+UART_STATUS = "0x10"
+UART_DIV = "0x18"
+TIMER_MTIME_LO = "0x20"
+TIMER_MTIME_HI = "0x28"
+TIMER_CMP_LO = "0x30"
+TIMER_CMP_HI = "0x38"
+TIMER_IRQ = "0x40"
+GPIO_OUT = "0x60"
+GPIO_IN = "0x68"
+GPIO_DIR = "0x70"
+SCRATCH = "0x80"
+CHIP_ID = "0x88"
+ALT = "0x90"
+SYS_A0 = "0x100"
+SYS_A1 = "0x108"
+SYS_W0 = "0x110"
+SYS_W1 = "0x118"
+SYS_SC0 = "0x120"
+SYS_SC1 = "0x128"
+SYS_CTRL = "0x130"
+SYS_STATUS = "0x138"
+SYS_OUT0 = "0x140"
+QSPI_CTRL = "0x180"
+QSPI_ADDR = "0x188"
+QSPI_DML = "0x190"
+QSPI_DIV = "0x198"
+QSPI_STAT = "0x1A0"
+QSPI_D0 = "0x1A8"
+QSPI_D1 = "0x1B0"
+I2C_CTRL = "0x1C0"
+I2C_ADDR = "0x1C8"
+I2C_TX = "0x1D0"
+I2C_RX = "0x1D8"
+I2C_STAT = "0x1E0"
+I2C_DIV = "0x1E8"
+PWM_PER = "0x1F0"
+PWM_D0 = "0x1F8"
+PWM_D1 = "0x200"
+PWM_EN = "0x208"
+ADC_CTRL = "0x210"
+ADC_TESTV = "0x218"
+ADC_STAT = "0x220"
+ADC_RES = "0x228"
+SPARSE_C = "0x230"
+SPARSE_W = "0x238"
+SPARSE_SKIP = "0x240"
+WDT_RELOAD = "0x248"
+WDT_CTRL = "0x250"
+WDT_KICK = "0x258"
+WDT_STAT = "0x260"
+TRNG_SAMPLE = "0x268"
+TRNG_STAT = "0x270"
+TRNG_WORD = "0x278"
+
+[quirks]
+# Documented hardware/ISA facts the compiler must respect. Never hardcode
+# these in codegen; read them here so future targets differ safely.
+imm12_signed = true
+tconst6_sanitizes_11 = true
+mmio_stride_bytes = 8
+branch_rs2_in_rd_field = true
+dmacfg_len_split = true
+gpr_shift_uses_low5 = true
+tshl_amount_from_gpr = true
+tlut_table_register = true
+mstatus_mie_bit = 0
+mtvec_default = "0x100"
+mie_timer_bit = 1
+sysr_mac_acc_lo = "0x15"
+chip_id = "0x48585432"
+trng_value_not_portable = true
+dma_sram0_only = true
