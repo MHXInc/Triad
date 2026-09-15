@@ -1,0 +1,30 @@
+// Triad demo: 3-class dot-product classifier + argmax.
+// in=[+1,+1,-1,-1]; p2==in wins (d=4). Expect UART: 00000002\n
+
+fn main() -> u32 {
+  triad vin = [+, +, -, -];
+  triad p0 = [+, -, -, -];
+  triad p1 = [-, -, -, -];
+  triad p2 = [+, +, -, -];
+  u32 d0 = dot(vin, p0);
+  u32 d1 = dot(vin, p1);
+  u32 d2 = dot(vin, p2);
+  u32 w = argmax3(d0, d1, d2);
+  uart.print_u32(w);
+  uart.newline();
+  halt();
+  return 0;
+}
+
+fn argmax3(x: u32, y: u32, z: u32) -> u32 {
+  u32 best = 0;
+  u32 bv = x;
+  if (y > bv) {
+    best = 1;
+    bv = y;
+  }
+  if (z > bv) {
+    best = 2;
+  }
+  return best;
+}

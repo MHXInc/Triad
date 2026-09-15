@@ -1,0 +1,32 @@
+// Triad demo: 2-input AND/OR perceptrons. Expect UART: 0001\n0111\n
+// (same observable behavior as the asm and_or demo)
+
+fn classify(t: triad, w: triad, thr: u32) -> u32 {
+  u32 d = dot(t, w);
+  u32 ch = 48;
+  if (d >= thr) {
+    ch = 49;
+  }
+  uart.putc(ch);
+  return ch;
+}
+
+fn main() -> u32 {
+  triad w = [+, +, 0, 0, 0, 0, 0, 0];
+  triad p0 = [-, -, 0, 0, 0, 0, 0, 0];
+  triad p1 = [-, +, 0, 0, 0, 0, 0, 0];
+  triad p2 = [+, -, 0, 0, 0, 0, 0, 0];
+  triad p3 = [+, +, 0, 0, 0, 0, 0, 0];
+  classify(p0, w, 2);
+  classify(p1, w, 2);
+  classify(p2, w, 2);
+  classify(p3, w, 2);
+  uart.newline();
+  classify(p0, w, 0);
+  classify(p1, w, 0);
+  classify(p2, w, 0);
+  classify(p3, w, 0);
+  uart.newline();
+  halt();
+  return 0;
+}
