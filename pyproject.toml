@@ -1,0 +1,16 @@
+# Triad packaging: library-only distribution (tools/ run from source).
+# No runtime dependencies (stdlib only); pyserial is optional for TRIP serial.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "triad-lang"
+version = "0.1.0"
+description = "Triad: a universal language for ternary processors (MHX-T2 backend)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Tern/Triad Source-Available License 1.0 (source-available, non-commercial)" }
+
+[tool.setuptools.packages.find]
+include = ["triad*"]
