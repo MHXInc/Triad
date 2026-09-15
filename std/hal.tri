@@ -1,0 +1,51 @@
+// Triad HAL (replaces hal.s). Flat calls only, ra=x1 convention internal.
+
+fn uart_putc(t: triad) -> u32 {
+  // raw TRF word to UART_TXDATA (low byte hits the wire).
+  // NOTE: caller must pass the triad in t10 position; single triad param
+  // always binds t10, so this is exact, not a convention accident.
+  asm("TSW t10, 0(x4)");
+  return 0;
+}
+
+fn uart_print_u32(x: u32) -> u32 {
+  u32 c = 8;
+  u32 s = 28;
+  u32 n = 0;
+  u32 k = 0;
+  while (c != 0) {
+    n = x >> s;
+    n = n & 15;
+    k = n < 10;
+    if (k != 0) {
+      n = n + 48;
+    } else {
+      n = n + 55;
+    }
+    uart_putc(n);
+    c = c - 1;
+    s = s - 4;
+  }
+  return 0;
+}
+
+fn uart_newline() -> u32 {
+  // low byte must be 0x0A: pairs [1:0]=10(+), [3:2]=10(+), rest 00(-)
+  triad t = [+, +, -, -, 0, 0, 0, 0];
+  uart_putc(t);
+  return 0;
+}
+
+fn timer_sleep_us(us: u32) -> u32 {
+  u32 d = us << 6;
+  u32 n = us << 5;
+  d = d + n;
+  n = us << 2;
+  d = d + n;
+  u32 now = timer.now();
+  d = now + d;
+  while (now < d) {
+    now = timer.now();
+  }
+  return 0;
+}

@@ -1,0 +1,18 @@
+// Triad TinyML kernels (replaces ml.s). Flat calls only.
+
+// argmax3 over u32 scores -> winning index 0/1/2.
+fn argmax3(x: u32, y: u32, z: u32) -> u32 {
+  u32 best = 0;
+  u32 bv = x;
+  if (y > bv) {
+    best = 1;
+    bv = y;
+  }
+  if (z > bv) {
+    best = 2;
+  }
+  return best;
+}
+
+// NOTE: block-scale re-quant happens in the systolic array HW
+// (per-row scale+shift); firmware only does integer argmax/threshold.
