@@ -89,9 +89,22 @@ class Gen:
         self.data: list[tuple[int, int]] = []
         self.data_next = 0x2000
         self.fns: dict[str, A.Fn] = {}
-        self.has_triad_params = False
-        self.has_u32_params = False
         self.in_call = False
+        q = utm.get("quirks", {})
+        self.mie_timer_bit = int(q.get("mie_timer_bit", 1))
+        self.mstatus_mie_bit = int(q.get("mstatus_mie_bit", 0))
+        self.trap_vector = int(q.get("mtvec_default", "0x100"), 0)
+        rpc = utm.get("regions", {})
+        if "reset_pc" in utm.get("target", {}):
+            rps = [int(v, 0) for v in utm["target"]["reset_pc"]]
+            if rps[0] != 0x0 or (len(rps) > 1 and rps[1] != 0x1000):
+                raise CodegenError("backend assumes reset PC 0x0/0x1000")
+        if self.trap_vector != 0x100:
+            raise CodegenError("backend assumes trap vector 0x100")
+        _ = rpc
+
+    def mmio_base(self) -> None:
+        self.const_u32(4, self.mmbase)
 
     # ---------- emit helpers ----------
     def e(self, line: str) -> None:
@@ -127,11 +140,6 @@ class Gen:
         globarr = [i for i in prog.items if isinstance(i, A.Global)]
         for fn in fns:
             self.fns[fn.name] = fn
-            for _, pt in fn.params:
-                if pt.name in ("u32", "bit"):
-                    self.has_u32_params = True
-                else:
-                    self.has_triad_params = True
         if not any(f.name == "main" for f in fns):
             raise CodegenError("missing fn main()")
         self.arr_base: dict[str, int] = {}
@@ -149,21 +157,25 @@ class Gen:
                 if fn.name != "main":
                     self.function(fn)
             self.e("main_boot:")
-            self.e("  ADDI x4, x0, 0xA0")
-            self.e("  SLLI x4, x4, 8")
-            self.e("  SLLI x4, x4, 16")
+            self.mmio_base()
             if mpus:
+                if len(mpus) > 1:
+                    raise CodegenError("only one mpu{} block in v1")
+                if len(mpus[0].regions) > 4:
+                    raise CodegenError(
+                        f"mpu needs {len(mpus[0].regions)} regions, "
+                        f"only 4 slots in v1")
                 for i, (b, m) in enumerate(mpus[0].regions[:4]):
                     self.const_u32(5, self.const_of(b, "mpu base"))
                     self.e(f"  CSRRW x0, {0x580 + i:#x}, x5")
                     self.const_u32(5, self.const_of(m, "mpu mask") | 1)
                     self.e(f"  CSRRW x0, {0x584 + i:#x}, x5")
             if irqs:
-                self.e("  ADDI x5, x0, 0x100")
+                self.const_u32(5, self.trap_vector)
                 self.e("  CSRRW x0, 0x305, x5")
-                self.e("  ADDI x5, x0, 2")
+                self.const_u32(5, 1 << self.mie_timer_bit)
                 self.e("  CSRRW x0, 0x304, x5")
-                self.e("  ADDI x5, x0, 1")
+                self.const_u32(5, 1 << self.mstatus_mie_bit)
                 self.e("  CSRRW x0, 0x300, x5")
             self.e("  JAL x1, main")
             self.e("  HALT")
@@ -175,15 +187,15 @@ class Gen:
             hb = [h for h in harts if h.hart == hart]
             if not hb:
                 raise CodegenError(f"no hart({hart}) block")
+            if irqs or mpus:
+                raise CodegenError("irq/mpu blocks need hart 0 in v1")
             self.e("  ORG 0x1000")
             self.e(f"  JAL x1, hart{hart}_main")
             for fn in fns:
-                if fn.name != "main":
+                if fn.name != "main" and fn.name in self._reachable(hb[0].body):
                     self.function(fn)
             self.e(f"hart{hart}_main:")
-            self.e("  ADDI x4, x0, 0xA0")
-            self.e("  SLLI x4, x4, 8")
-            self.e("  SLLI x4, x4, 16")
+            self.mmio_base()
             ctx = FnCtx(self, A.Fn(f"hart{hart}_main", [], None, []))
             self.stmts(ctx, hb[0].body)
             self.e("  HALT")
@@ -198,7 +210,60 @@ class Gen:
             return e.value
         raise CodegenError(f"{what} must be a constant number")
 
+    def _called_in_expr(self, e, out: set) -> None:
+        if isinstance(e, A.Call):
+            if "." not in e.name and e.name in self.fns:
+                out.add(e.name)
+            for a in e.args:
+                self._called_in_expr(a, out)
+        elif isinstance(e, A.Bin):
+            self._called_in_expr(e.l, out)
+            self._called_in_expr(e.r, out)
+        elif isinstance(e, A.Un):
+            self._called_in_expr(e.e, out)
+        elif isinstance(e, A.Index):
+            self._called_in_expr(e.index, out)
+
+    def _called_in_stmts(self, ss: list, out: set) -> None:
+        for s in ss:
+            if isinstance(s, A.Decl):
+                if s.init is not None:
+                    self._called_in_expr(s.init, out)
+            elif isinstance(s, A.Assign):
+                if s.index is not None:
+                    self._called_in_expr(s.index, out)
+                if s.value is not None:
+                    self._called_in_expr(s.value, out)
+            elif isinstance(s, A.If):
+                self._called_in_expr(s.cond, out)
+                self._called_in_stmts(s.then, out)
+                self._called_in_stmts(s.els, out)
+            elif isinstance(s, A.While):
+                self._called_in_expr(s.cond, out)
+                self._called_in_stmts(s.body, out)
+            elif isinstance(s, A.Return):
+                if s.value is not None:
+                    self._called_in_expr(s.value, out)
+            elif isinstance(s, A.ExprStmt):
+                self._called_in_expr(s.expr, out)
+
+    def _reachable(self, body: list) -> set:
+        """User-function names reachable from a statement list (transitive)."""
+        found: set[str] = set()
+        self._called_in_stmts(body, found)
+        done: set[str] = set()
+        while found - done:
+            name = sorted(found - done)[0]
+            done.add(name)
+            fn = self.fns.get(name)
+            if fn is not None:
+                self._called_in_stmts(fn.body, found)
+        return done
+
     def handler(self, irqs) -> None:
+        for i in irqs:
+            if i.src not in ("TIMER", "ECALL"):
+                raise CodegenError(f"unknown irq source {i.src}")
         self.e("  ORG 0x100")
         self.e("handler:")
         bodies = {i.src: i.body for i in irqs}
@@ -288,7 +353,7 @@ class Gen:
             r = ctx.alloc_trf()
             ctx.vars[s.name] = ("trf1", r)
             if s.init is not None:
-                self.e(f"  TLOCI t{r}, {self.trit_enc(s.init)}")
+                self.e(f"  TLOCI t{r}, {self.trit_imm(s.init)}")
         elif s.typ.name == "triad" and s.typ.array is None:
             r = ctx.alloc_trf()
             ctx.vars[s.name] = ("trf", r)
@@ -296,16 +361,6 @@ class Gen:
                 self.triad_init(ctx, r, s.init)
         else:
             raise CodegenError(f"bad decl {s.name}: {s.typ}")
-
-    def trit_enc(self, e) -> int:
-        if isinstance(e, A.TritLit):
-            return {1: 2, -1: 0, 0: 1}[e.value]
-        if isinstance(e, A.Num) and e.value == 0:
-            return 1
-        if isinstance(e, A.Un) and e.op == "-" and isinstance(e.e, A.Num) \
-                and e.e.value == 1:
-            return 0
-        raise CodegenError("trit init needs +, - or 0 literal")
 
     def triad_init(self, ctx: FnCtx, r: int, e) -> None:
         if isinstance(e, A.VecLit):
@@ -517,7 +572,7 @@ class Gen:
         if isinstance(e, A.Call):
             if e.name in ("dot", "red_sum", "red_nnz", "red_pos",
                            "red_neg", "as_u32", "timer.now", "timer.compare",
-                           "gpio.get", "dma.stat", "sys.out"):
+                           "gpio.get", "dma.stat", "sys.out", "yield"):
                 return "gpr"
             if e.name in self.fns and self.fns[e.name].ret is not None:
                 return "trf" if self.fns[e.name].ret.name in (
@@ -642,7 +697,14 @@ class Gen:
         if self.in_call:
             raise CodegenError("nested calls unsupported in v1 (flat ABI)")
         if "." in e.name or e.name in self.builtins():
-            return self.builtin(ctx, e)
+            # Builtins are inline (no call window), but their arguments
+            # still evaluate under the flag so a user call inside can never
+            # silently corrupt an outer user call's window.
+            self.in_call = True
+            try:
+                return self.builtin(ctx, e)
+            finally:
+                self.in_call = False
         if e.name not in self.fns:
             raise CodegenError(f"unknown function {e.name}")
         fn = self.fns[e.name]
@@ -678,7 +740,7 @@ class Gen:
                 "uart.putc", "uart.print_u32", "uart.newline",
                 "timer.sleep_us", "timer.compare", "timer.now", "gpio.set", "gpio.get",
                 "dma.copy", "dma.stride", "dma.start", "dma.wait",
-                "dma.stat", "sys.run", "sys.out", "halt"}
+                "dma.stat", "sys.run", "sys.out", "halt", "yield"}
 
     def builtin(self, ctx: FnCtx, e: A.Call):
         n, a = e.name, e.args
@@ -773,6 +835,9 @@ class Gen:
             return self.rt_sysout(ctx, a[0])
         if n == "halt":
             self.e("  HALT")
+            return ("gpr", 0)
+        if n == "yield":
+            self.e("  ECALL")
             return ("gpr", 0)
         raise CodegenError(f"unknown builtin {n}")
 

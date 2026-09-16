@@ -39,5 +39,14 @@ def validate(d: dict, path: str) -> None:
 def builtin_targets() -> dict[str, str]:
     here = os.path.dirname(os.path.abspath(__file__))
     d = os.path.join(here, "..", "targets")
+    if not os.path.isdir(d):
+        # Installed layout (pip): targets ship as package data.
+        try:
+            from importlib.resources import files
+            d = str(files("triad.targets"))
+        except (ImportError, ModuleNotFoundError, TypeError):
+            return {}
+    if not os.path.isdir(d):
+        return {}
     return {f[:-9]: os.path.join(d, f) for f in os.listdir(d)
             if f.endswith(".utm.toml")}
