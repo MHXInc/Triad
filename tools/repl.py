@@ -16,9 +16,13 @@ from triad.trip import SerialTransport, SimTransport  # noqa
 
 def make_transport(args: list[str]):
     if "--port" in args:
-        port = args[args.index("--port") + 1]
-        baud = int(args[args.index("--baud") + 1]) if "--baud" in args \
-            else 115200
+        try:
+            port = args[args.index("--port") + 1]
+            baud = int(args[args.index("--baud") + 1]) if "--baud" in args \
+                else 115200
+        except (IndexError, ValueError):
+            print("usage: repl.py [--port PORT] [--baud N]")
+            sys.exit(2)
         return SerialTransport(port, baud), True
     try:
         sys.path.insert(0, chip_path("tools", "python"))
@@ -70,7 +74,7 @@ def main() -> None:
                     c = t.core
                     print("pc=%08x instret=%d halted=%s" %
                           (c.pc, c.instret, c.halted))
-            elif cmd == "uart" :
+            elif cmd == "uart":
                 print(t.transact("U " + "".join(
                     f"{b:02x}" for b in " ".join(parts[1:]).encode())))
             elif cmd == "run":

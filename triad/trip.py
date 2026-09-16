@@ -30,9 +30,18 @@ def fmt_word(v: int) -> str:
 class SimTransport:
     """TRIP responder wired to the chip reference simulator (lockstep)."""
 
+    # Debug-upload cap: keeps a malformed U command from queueing megabytes.
+    MAX_UPLINK = 1024
+
     def __init__(self, soc):
         self.soc = soc
         self.core = soc.cores[0]
+
+    def _num(self, text: str) -> int:
+        try:
+            return int(text, 0)
+        except ValueError:
+            raise TripError(f"bad number {text!r}")
 
     def transact(self, line: str) -> str:
         cmd, args = parse_line(line)
@@ -41,11 +50,11 @@ class SimTransport:
         if cmd == "R":
             if len(args) != 1:
                 raise TripError("R needs addr")
-            return "V " + fmt_word(self.core._load(int(args[0], 0)))
+            return "V " + fmt_word(self.core._load(self._num(args[0])))
         if cmd == "W":
             if len(args) != 2:
                 raise TripError("W needs addr + word")
-            self.core._store(int(args[0], 0), int(args[1], 0))
+            self.core._store(self._num(args[0]), self._num(args[1]))
             return "OK"
         if cmd == "H":
             return f"H {1 if self.core.halted else 0}"
@@ -54,9 +63,14 @@ class SimTransport:
             self.soc.periph.tick()
             return "OK"
         if cmd == "U":
-            if not args:
+            if len(args) != 1:
                 raise TripError("U needs hex")
-            raw = bytes.fromhex(args[0])
+            try:
+                raw = bytes.fromhex(args[0])
+            except ValueError:
+                raise TripError(f"bad hex {args[0]!r}")
+            if len(raw) > self.MAX_UPLINK:
+                raise TripError(f"U payload capped at {self.MAX_UPLINK} bytes")
             self.soc.periph.uart_rx.extend(raw)
             return f"OK {len(raw)}"
         raise TripError(f"unknown command {cmd}")

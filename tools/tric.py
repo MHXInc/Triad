@@ -28,27 +28,30 @@ def main() -> None:
     out = None
     src = None
     i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--target":
+    try:
+        while i < len(args):
+            a = args[i]
+            if a == "--target":
+                i += 1
+                target = args[i]
+            elif a == "--hex":
+                want_hex = True
+            elif a == "--fmt":
+                want_fmt = True
+            elif a == "--check":
+                want_check = True
+            elif a == "--hart1":
+                want_hart1 = True
+            elif a == "-o":
+                i += 1
+                out = args[i]
+            elif a.startswith("-"):
+                sys.exit(f"unknown flag {a}")
+            else:
+                src = a
             i += 1
-            target = args[i]
-        elif a == "--hex":
-            want_hex = True
-        elif a == "--fmt":
-            want_fmt = True
-        elif a == "--check":
-            want_check = True
-        elif a == "--hart1":
-            want_hart1 = True
-        elif a == "-o":
-            i += 1
-            out = args[i]
-        elif a.startswith("-"):
-            sys.exit(f"unknown flag {a}")
-        else:
-            src = a
-        i += 1
+    except IndexError:
+        sys.exit(f"flag {a} needs a value\n" + __doc__)
     if src is None:
         print(__doc__)
         sys.exit(2)
