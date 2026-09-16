@@ -311,9 +311,6 @@ class Parser:
         if t.kind == "OP1" and t.text in "+-":
             self.next()
             return A.TritLit(1 if t.text == "+" else -1)
-        if t.kind == "IDENT" and t.text == "0":
-            self.next()
-            return A.TritLit(0)
         if t.kind == "PUNCT" and t.text == "[":
             self.next()
             elems = []

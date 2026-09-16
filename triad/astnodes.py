@@ -24,7 +24,7 @@ class Fn:
     params: list  # [(name, Type)]
     ret: Type | None
     body: list
-    kind: str = "fn"  # fn | task | hart | irq | main-ish
+    kind: str = "fn"  # fn | task
 
 
 @dataclass
