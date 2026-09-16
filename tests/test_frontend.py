@@ -110,5 +110,70 @@ class TestAllocErrors(unittest.TestCase):
         self.assertIn("big", str(c.exception))
 
 
+class TestErrorPaths(unittest.TestCase):
+    def gen(self):
+        import os
+        from triad.codegen import Gen
+        from triad.utm import builtin_targets, load
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return Gen(load(builtin_targets()["mhx-t2"]))
+
+    def fails(self, src, frag):
+        from triad.codegen import CodegenError
+        with self.assertRaises(CodegenError) as c:
+            self.gen().program(parse(src))
+        self.assertIn(frag, str(c.exception))
+
+    def test_unknown_function(self):
+        self.fails("fn main() -> u32 { nope(); return 0; }\n", "unknown function")
+
+    def test_arity(self):
+        self.fails("fn f(a: u32) -> u32 { return a; }\n"
+                   "fn main() -> u32 { f(1, 2); return 0; }\n", "arity")
+
+    def test_bad_decl(self):
+        self.fails("fn main() -> u32 { triad[4] x; return 0; }\n", "bad decl")
+
+    def test_void_return_value(self):
+        self.fails("fn main() { return 1; }\n", "return with value")
+
+    def test_dma_len(self):
+        self.fails("fn main() -> u32 { dma.copy(1, 2, 5000); return 0; }\n",
+                   "len")
+
+    def test_missing_main(self):
+        self.fails("fn f() -> u32 { return 0; }\n", "missing fn main")
+
+    def test_no_hart_block(self):
+        from triad.codegen import CodegenError
+        with self.assertRaises(CodegenError) as c:
+            self.gen().program(parse("fn main() -> u32 { return 0; }\n"),
+                               hart=1)
+        self.assertIn("no hart(1) block", str(c.exception))
+
+    def test_nested_call(self):
+        self.fails("fn f(a: u32) -> u32 { return a; }\n"
+                   "fn main() -> u32 { f(f(1)); return 0; }\n", "nested")
+
+    def test_nested_call_in_builtin(self):
+        self.fails("fn f(a: u32) -> u32 { return a; }\n"
+                   "fn main() -> u32 { uart.print_u32(f(1)); return 0; }\n",
+                   "nested")
+
+    def test_unknown_builtin(self):
+        self.fails("fn main() -> u32 { frobnicate(); return 0; }\n",
+                   "unknown function")
+
+    def test_unknown_irq(self):
+        self.fails("fn main() -> u32 { halt(); return 0; }\n"
+                   "irq(UART) { halt(); }\n", "unknown irq source")
+
+    def test_mpu_too_many(self):
+        regions = "".join(
+            f"region({i * 4096}, 0xFFFFF000);" for i in range(5))
+        self.fails("fn main() -> u32 { halt(); return 0; }\n"
+                   f"mpu {{ {regions} }}\n", "regions")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -75,6 +75,20 @@ class TestE2E(unittest.TestCase):
         asm_src = "\n".join(lines) + "\n"
         self.assertIn("ORG 0x1000", asm_src)
 
+    def test_hart1_skips_unrelated_data(self):
+        src = ("fn helper() -> u32 {\n"
+               "  triad w = [+, +, 0, 0, 0, 0, 0, 0];\n"
+               "  u32 d = dot(w, w);\n"
+               "  return d;\n"
+               "}\n"
+               "fn main() -> u32 { halt(); return 0; }\n"
+               "hart(1) { uart.newline(); halt(); }\n")
+        gen = Gen(UTM)
+        lines, _ = gen.program(parse(src), hart=1)
+        asm_src = "\n".join(lines) + "\n"
+        self.assertIn("ORG 0x1000", asm_src)
+        self.assertNotIn("helper", asm_src)
+
     @needs_chip
     def test_timer_irq(self):
         src = ("fn main() -> u32 {\n"
@@ -108,6 +122,37 @@ class TestE2E(unittest.TestCase):
         self.assertEqual(bytes(soc.periph.uart_out), b"T")
 
     @needs_chip
+    def test_ecall_irq(self):
+        src = ("fn main() -> u32 {\n"
+               "  yield();\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n"
+               "irq(ECALL) {\n"
+               "  u32 c = 69;\n"
+               "  uart.putc(c);\n"
+               "  halt();\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(20000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(bytes(soc.periph.uart_out), b"E")
+
+    @needs_chip
     def test_dma_copy(self):
         src = ("triad[2] src;\n"
                "triad[2] dst;\n"
@@ -139,6 +184,154 @@ class TestE2E(unittest.TestCase):
         self.assertTrue(soc.cores[0].halted)
         self.assertEqual(soc.priv[0].get(0x1010), soc.priv[0].get(0x1000))
         self.assertEqual(bytes(soc.periph.uart_out), b"Z")
+
+    @needs_chip
+    def test_gpio_roundtrip(self):
+        src = ("fn main() -> u32 {\n"
+               "  gpio.set(3, 1);\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(20000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(soc.periph.gpio_out & 0x08, 0x08)
+
+    @needs_chip
+    def test_timer_now_and_reduction(self):
+        src = ("fn main() -> u32 {\n"
+               "  triad w = [+, +, +, 0, 0, 0, 0, 0];\n"
+               "  u32 d = red_sum(w);\n"
+               "  uart.print_u32(d);\n"
+               "  uart.newline();\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(40000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(bytes(soc.periph.uart_out), b"00000003\n")
+
+    @needs_chip
+    def test_timer_now_ticks(self):
+        src = ("fn main() -> u32 {\n"
+               "  timer.sleep_us(100);\n"
+               "  u32 t = timer.now();\n"
+               "  uart.print_u32(t != 0);\n"
+               "  uart.newline();\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(40000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(bytes(soc.periph.uart_out), b"00000001\n")
+
+    @needs_chip
+    def test_trit_bit_types(self):
+        src = ("fn main() -> u32 {\n"
+               "  trit t = +;\n"
+               "  triad v = [+, -, 0, 0, 0, 0, 0, 0];\n"
+               "  bit b = 1;\n"
+               "  u32 d = dot(v, v);\n"
+               "  uart.print_u32(d);\n"
+               "  uart.newline();\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(20000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(bytes(soc.periph.uart_out), b"00000002\n")
+
+
+    @needs_chip
+    def test_mpu_regions(self):
+        src = ("triad[2] buf;\n"
+               "fn main() -> u32 {\n"
+               "  buf[0] = [+, 0, 0, 0, 0, 0, 0, 0];\n"
+               "  uart.putc(buf[0]);\n"
+               "  halt();\n"
+               "  return 0;\n"
+               "}\n"
+               "mpu {\n"
+               "  region(0x0, 0xFFFF0000);\n"
+               "  region(0xA0000000, 0xFFFF0000);\n"
+               "}\n")
+        gen = Gen(UTM)
+        lines, data = gen.program(parse(src), hart=0)
+        asm_src = "\n".join(lines) + "\n"
+        out, _, adata = assemble(asm_src, ".")
+        imem = [0xF1000000] * ((max(pc for pc, _, _ in out) // 4) + 1)
+        for pc, w, _ in out:
+            imem[pc // 4] = w
+        mem = {a: v for a, v in data}
+        mem.update({a: v for a, v in adata})
+        soc = SoC(imem)
+        soc.priv[0].update(mem)
+        for _ in range(20000):
+            if soc.cores[0].halted:
+                break
+            soc.cores[0].step()
+            soc.periph.tick()
+        self.assertTrue(soc.cores[0].halted)
+        self.assertEqual(bytes(soc.periph.uart_out), b"V")
 
 
 if __name__ == "__main__":
