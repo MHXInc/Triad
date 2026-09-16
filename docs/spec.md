@@ -49,18 +49,24 @@ asm("HALT");                  // escape hatch: raw MHX mnemonic
 hart(1) { main1(); }          // separate image for hart 1
 irq(TIMER) { tick(); }        // handler; mtvec/mie/MIE automatic
 irq(ECALL) { yield(); }
-mpu { region(0x0, 0xFFFFF000); }
-task sensor() { ... }         // = fn + convention (scheduler is a lib)
+mpu { region(0x0, 0xFFFF0000); region(0xA0000000, 0xFFFF0000); }
+task sensor() { ... }         // = fn + convention (experimental)
 ```
+
+A match is `((addr ^ base) & mask) == 0`. Regions must cover everything
+the program touches — code, `triad` arrays (`0x1000+`), literals
+(`0x2000+`) and MMIO (`0xA0000000`) — or accesses fault. At most 4
+regions in one `mpu` block; `hart(1)` images take no `irq`/`mpu` blocks.
 
 ## Peripherals (typed by the UTM)
 
 ```c
-uart.print(x); uart.putc(c); uart.newline();
+uart.print_u32(x); uart.putc(c); uart.newline();
 timer.sleep_us(x); timer.compare(x); timer.now();
 gpio.set(n, v); gpio.get(n);
 dma.copy(dst, src, len); dma.stride(s, d); dma.start(); dma.wait();
-sys.dot/systolic(a, w, scale);   // accelerator via MMIO
+sys.run(a0, a1, w0, w1, sc, sh); sys.out(i);   // accelerator via MMIO
+halt(); yield();   // yield traps to the ECALL handler
 ```
 
 ## Conventions (MHX-T2 backend)
@@ -68,6 +74,8 @@ sys.dot/systolic(a, w, scale);   // accelerator via MMIO
 - Flat calls (no nesting/recursion): `u32` args in x10+, `triad` in
   t10+; return in x10/t10; `ra=x1`; MMIO base in x4 (generated at boot).
 - Handler at `0x100`; boot at `0x0`; hart1 at `0x1000` (same map as the SoC).
-- Compile errors (never silent): immediate outside signed-12, `11` pair
-  in a packed constant, MMIO not a multiple of 8, IRQ without `MIE`,
-  `mepc` outside its context, registers exhausted.
+- Compile errors (never silent): unknown builtins/functions, arity and
+  type mismatches, unknown `irq` sources, more than 4 MPU regions,
+  non-constant DMA lengths, MMIO offsets that are not multiples of 8,
+  exhausted registers. Large immediates are synthesized (any 32-bit value
+  works); `mstatus.MIE` is generated automatically when `irq` blocks exist.
